@@ -114,6 +114,21 @@ class BioSignalsReader:
         except BaseException as e:
             print('Error reading file', e)
 
+    def __read_combined_file__(self, path=None):
+        """ Reads already combined file
+        path : Path to file, has to include whole file name e.g. S2.pkl
+        """
+        try:
+            if path is None or not str(path).endswith('.pkl'):
+                path = '%s/%s_combined.pkl' % (self.directory, self.sensor)
+            self.all_sensor_data = pandas.read_pickle(path)
+            self.subjects = list(self.all_sensor_data.keys())
+            self.__set_average_stress__()
+        except FileNotFoundError as e:
+            print('File with such name not found', e)
+        except KeyError:
+            print('Mismatched file type.')
+
     def __convert_data__(self, data, sensor, resolution=16):
         if sensor in self.transfer_functions.keys():
             return self.transfer_functions[sensor](data, resolution)
@@ -135,7 +150,7 @@ class BioSignalsReader:
         except KeyError as e:
             print('Subject not found', e)
 
-    def draw_stress_graph(self, subject, show=True, save=False):
+    def draw_stress_graph(self, subject):
         try:
             y_values = self.all_sensor_data[subject]['stress_level']
             size = len(y_values)
@@ -144,32 +159,28 @@ class BioSignalsReader:
             plt.xlabel('Time (s)')
             plt.ylabel('Stress level label')
             plt.title(f'Stress level of subject {subject} over time')
-            if save:
-                self.__check_figure_dir__()
-                plt.savefig('figures/%s/%s_sensor_graph.png' % (self.sensor, subject))
-            if show:
-                plt.show()
-            # clear plt to get better memory efficiency
-            # plt.cla()
-            # plt.clf()
-            # plt.close('all')
+            plt.show()
         except KeyError as e:
             print('Subject not found', e)
 
-    def save_graphs(self, g_type='sensor'):
+    def save_all_graphs(self, g_type='sensor'):
+        """ Saves all specified graphs with multiprocessing pools
+        g_type : type of graph to save (sensor, stress, all)
+        Throws:
+            - RuntimeError: if method is not run from __main__
+        """
         try:
             self.__check_figure_dir__()
             pool = Pool(2)
             subs = list(self.subjects)
             if g_type == 'sensor':
                 pool.map(self.save_sensor_graph, iter(subs,))
+            if g_type == 'all':
+                pool.map(self.save_subject_graph, iter(subs,))
+            if g_type == 'stress':
+                raise NotImplementedError
         except RuntimeError:
             print('Make sure you run *save_graphs* method from if __name__ == \'__main__\'')
-        # for subject in self.all_sensor_data.keys():
-        #     if g_type == 'stress':
-        #         self.draw_stress_graph(subject=subject, show=False, save=True)
-        #     if g_type == 'all':
-        #         self.draw_subject_graph(subject=subject, show=False, save=True)
 
     def __prepare_sensor_graph__(self, subject):
         sensor_signal = self.all_sensor_data[subject]['sensor_signal']
@@ -184,19 +195,7 @@ class BioSignalsReader:
         plt.ylabel('%s sensor (%s)' % (self.sensor, self.units[self.sensor]))
         plt.grid()
 
-    def save_sensor_graph(self, subject):
-        self.__prepare_sensor_graph__(subject)
-        plt.savefig('figures/%s/%s_sensor_graph.png' % (self.sensor, subject))
-        plt.close()
-
-    def draw_sensor_graph(self, subject):
-        try:
-            self.__prepare_sensor_graph__(subject)
-            plt.show()
-        except KeyError as e:
-            print('Key does not exist in dictionary, reading', e)
-
-    def draw_subject_graph(self, subject, show=True, save=False):
+    def __prepare_subject_graph__(self, subject):
         sensor_signal = self.all_sensor_data[subject]['sensor_signal']
         stress_signal = self.all_sensor_data[subject]['stress_level']
         size = len(sensor_signal)
@@ -221,34 +220,29 @@ class BioSignalsReader:
         plt.grid()
         plt.title('Graph for subject %s' % subject)
         fig.tight_layout()
-        if save:
-            self.__check_figure_dir__()
-            plt.savefig('figures/%s/%s_subject_graph.png' % (self.sensor, subject))
-        if show:
-            plt.show()
-        plt.cla()
-        plt.clf()
-        plt.close('all')
+
+    def save_subject_graph(self, subject):
+        self.__prepare_subject_graph__(subject)
+        plt.savefig('figures/%s/%s_subject_graph.png' % (self.sensor, subject))
+        plt.close()
+
+    def save_sensor_graph(self, subject):
+        self.__prepare_sensor_graph__(subject)
+        plt.savefig('figures/%s/%s_sensor_graph.png' % (self.sensor, subject))
+        plt.close()
+
+    def draw_sensor_graph(self, subject):
+        self.__prepare_sensor_graph__(subject)
+        plt.show()
+
+    def draw_subject_graph(self, subject):
+        self.__prepare_subject_graph__(subject)
+        plt.show()
 
     def save_to_pickle(self, path=None):
         if path is None:
             path = '%s/%s_combined.pkl' % (self.directory, self.sensor)
         pandas.to_pickle(self.all_sensor_data, path)
-
-    def __read_combined_file__(self, path=None):
-        """ Reads already combined file
-        path : Path to file, has to include whole file name e.g. S2.pkl
-        """
-        try:
-            if path is None or not str(path).endswith('.pkl'):
-                path = '%s/%s_combined.pkl' % (self.directory, self.sensor)
-            self.all_sensor_data = pandas.read_pickle(path)
-            self.subjects = list(self.all_sensor_data.keys())
-            self.__set_average_stress__()
-        except FileNotFoundError as e:
-            print('File with such name not found', e)
-        except KeyError:
-            print('Mismatched file type.')
 
     def get_stress_levels(self, subject):
         vals = np.zeros(4)
@@ -257,18 +251,6 @@ class BioSignalsReader:
             if 0 < x < 5:
                 vals[x - 1] += 1
         return vals
-
-    def save_all_graphs(self, g_type='sensor'):
-        """ Saves all subject graphs
-        g_type : type of graph to save (sensor, stress, all)
-        """
-        for subject in self.all_sensor_data.keys():
-            if g_type == 'sensor':
-                self.draw_sensor_graph(subject=subject, show=False, save=True)
-            if g_type == 'stress':
-                self.draw_stress_graph(subject=subject, show=False, save=True)
-            if g_type == 'all':
-                self.draw_subject_graph(subject=subject, show=False, save=True)
 
     def __set_average_stress__(self):
         for subject in self.all_sensor_data:
