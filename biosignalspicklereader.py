@@ -15,7 +15,7 @@ def calculate_stress_avg(label):
 class BioSignalsReader:
 
     def __init__(self, sensor=None, path=None, position='chest', sampling_rate=700):
-        """ Reads either separate pickle file or
+        """ Reads either separate pickle files or
         reads every pickle file starting with name S (as subject) in given directory
         Examples:
             - BioSignalsReader(sensor='ECG', path='data') will loop through all files
@@ -264,6 +264,22 @@ class BioSignalsReader:
             os.mkdir(directory)
 
     def prepare_train_data(self):
+        y_train = list()
+        x_train = list()
+        for subject in self.all_sensor_data.keys():
+            sensor_signal = np.array(self.all_sensor_data[subject]['sensor_signal'], dtype=float)
+            stress_level = np.array(self.all_sensor_data[subject]['stress_level'], np.uint8)
+
+            for i in range(1, 5):
+                y_train.append(sensor_signal[stress_level == i])
+                x_train.append(i)
+
+        # self.y_train = y_train
+        # self.x_train = x_train
+        # [print(y_train[x].shape for x in y_train)]
+        return x_train, y_train
+
+    def prepare_train_data2(self):
 
         y_train = list([])
         for i in range(1, 5):
