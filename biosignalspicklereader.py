@@ -1,10 +1,13 @@
 import glob
+import os
+from multiprocessing import Pool
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas
+
+from calculation import features as feat
 import conversion
-import os
-from multiprocessing import Pool
 
 
 def calculate_stress_avg(label):
@@ -40,7 +43,7 @@ class BioSignalsReader:
         self.sensor = sensor
         self.position = position
         self.sampling_rate = sampling_rate
-        self.subjects = None
+        self.subjects = []
         self.all_sensor_data = dict()
         self.avg_stress = dict()
         self.append = False
@@ -127,7 +130,7 @@ class BioSignalsReader:
         except FileNotFoundError as e:
             print('File with such name not found', e)
         except KeyError:
-            print('Mismatched file type.')
+            print('Mismatched file structure.')
 
     def __convert_data__(self, data, sensor, resolution=16):
         if sensor in self.transfer_functions.keys():
@@ -163,7 +166,7 @@ class BioSignalsReader:
         except KeyError as e:
             print('Subject not found', e)
 
-    def save_all_graphs(self, g_type='sensor'):
+    def save_all_graphs(self, g_type='sensor', subjects=None):
         """ Saves all specified graphs with multiprocessing pools
         g_type : type of graph to save (sensor, stress, all)
         Throws:
@@ -172,12 +175,14 @@ class BioSignalsReader:
         try:
             self.__check_figure_dir__()
             pool = Pool(2)
-            subs = list(self.subjects)
+            if subjects is None:
+                subjects = list(self.subjects)
+
             if g_type == 'sensor':
-                pool.map(self.save_sensor_graph, iter(subs,))
-            if g_type == 'all':
-                pool.map(self.save_subject_graph, iter(subs,))
-            if g_type == 'stress':
+                pool.map(self.save_sensor_graph, iter(subjects, ))
+            elif g_type == 'all':
+                pool.map(self.save_subject_graph, iter(subjects, ))
+            elif g_type == 'stress':
                 raise NotImplementedError
         except RuntimeError:
             print('Make sure you run *save_graphs* method from if __name__ == \'__main__\'')
@@ -262,6 +267,24 @@ class BioSignalsReader:
         directory = 'figures/%s' % self.sensor
         if not os.path.isdir(directory):
             os.mkdir(directory)
+
+    def prepare_feature_matrix(self):
+        num_of_subjects = len(self.all_sensor_data.keys())
+        features = feat
+        x_matrix = np.zeros((num_of_subjects * 4, 4))
+        y_matrix = []
+
+        for i, subject in enumerate(self.all_sensor_data.keys()):
+            sensor_signal = np.array(self.all_sensor_data[subject]['sensor_signal'], dtype=float)
+            stress_level = np.array(self.all_sensor_data[subject]['stress_level'], np.uint8)
+            for j in range(1, 5):
+                sig_interval = sensor_signal[stress_level == j].flatten()
+                feats_for_sub = []
+                for feature in features:
+                    feats_for_sub.append(features[feature](sig_interval))
+                x_matrix[i * 4 + (j - 1), :] = feats_for_sub
+                y_matrix.append(j)
+        return x_matrix, np.array(y_matrix)
 
     def prepare_train_data(self):
         y_train = list()
