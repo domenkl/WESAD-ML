@@ -11,7 +11,8 @@ def std(x):
 
 
 def peaks(x):
-    return len(scs.find_peaks(x))
+    peak_nums, _ = scs.find_peaks(x)
+    return len(peak_nums)
 
 
 def median(x):
