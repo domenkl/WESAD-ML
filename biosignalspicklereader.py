@@ -34,7 +34,7 @@ class BioSignalsReader:
         File structure:
         S1: {
             sensor_signal: [...]  for ECG : [-1.5 mV, 1.5mV]
-            stress_level: [...]  [0, 7]
+            stress_level: [...]  [0, 7] - state in which subject was (baseline, stress...)
             stress_level_avg: average
         },
         S2: {...}, ...
@@ -47,8 +47,6 @@ class BioSignalsReader:
         self.all_sensor_data = dict()
         self.avg_stress = dict()
         self.append = False
-        self.y_train = None
-        self.x_train = np.array([1, 2, 3, 4])
 
         self.transfer_functions = conversion.transfer_functions
         self.units = conversion.units
@@ -269,6 +267,14 @@ class BioSignalsReader:
             os.mkdir(directory)
 
     def prepare_feature_matrix(self):
+        """ Prepares feature matrix for given sensor
+        features are defined in calculation.features
+        returns: - x_matrix
+            [[mean_S2, std_S2, peaks_S2, median_S2], - for stress value 1
+            [mean_S2, std_S2, peaks_S2, median_S2],  - for stress value 2
+            [...]] - ...
+                y_matrix stress value corresponding to x_matrix row
+        """
         num_of_subjects = len(self.all_sensor_data.keys())
         features = feat
         x_matrix = np.zeros((num_of_subjects * len(features.keys()), 4))
