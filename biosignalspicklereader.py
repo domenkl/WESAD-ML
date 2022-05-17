@@ -1,10 +1,17 @@
+import datetime
 import glob
 import os
+import warnings
+from itertools import combinations
 from multiprocessing import Pool
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas
+from sklearn import svm
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import ShuffleSplit
 
 from calculation import features as feat
 import conversion
@@ -13,10 +20,13 @@ import conversion
 class BioSignalsReader:
 
     def __init__(self, sensor='all', path=None, position='chest', sampling_rate=700):
-        """ Reads either separate pickle files or reads every pickle file starting with name S (as subject) in given
-        directory. Note: all subject pkl files must be in the same directory. Examples: - BioSignalsReader(
-        sensor='ECG', path='data') will loop through all files in data directory, get ECG values for each file and
-        save it to ECG_combined.pkl - BioSignalsReader(sensor='ECG' path='data/S1.pkl) will read S1.pkl file
+        """ Reads either separate pickle files or reads every pickle file starting with
+        name S (as subject) in given directory.
+        Note: all subject pkl files must be in the same directory.
+        Examples:
+            - BioSignalsReader(sensor='ECG', path='data') will loop through all files
+            in data directory, get ECG values for each file and save it to ECG_combined.pkl
+            - BioSignalsReader(sensor='ECG' path='data/S1.pkl) will read S1.pkl file
 
         Params:
             - sensor : Name of sensor (ECG, ACC, ...) or list of sensors
@@ -26,22 +36,10 @@ class BioSignalsReader:
 
         File structure for combined files:
         S1: {
-            - sensor_signal: [...]  for ECG : [-1.5 mV, 1.5mV]
-            - label: [...]  [0, 7] - condition of subject throughout the experiment
+            sensor_signal: [...]  for ECG : [-1.5 mV, 1.5mV]
+            label: [...]  [0, 7] - condition of subject throughout the experiment
             (1 - baseline, 2 - stress, 3 - amusement, 4 - meditation)
-
         },
-        S2: {...}, ...
-        Otherwise if multiple sensors are given all_sensor_data structure is following:
-        ECG: {
-            - S1: [...],
-            - S2: [...]
-        },
-        EDA : {
-            - S1: [...],
-            - S2: [...]
-        }
-        subject condition is saved then in self.subject_labels
         """
         self.directory = None
         self.sensor = sensor
@@ -54,6 +52,7 @@ class BioSignalsReader:
         self.append = False
         self.multiple_sensors = False
         self.chest_sensors = ['ACC', 'ECG', 'EDA', 'EMG', 'Temp', 'Resp']
+        self.files = None
         self.units = conversion.units
         self.ranges = conversion.ranges
 
@@ -69,12 +68,15 @@ class BioSignalsReader:
 
         # if more than one sensor is given
         if type(self.sensor) is list and len(self.sensor) > 1:
+            self.sensor.sort()
             self.multiple_sensors = True
             files = glob.glob(path + '/S*.pkl')
+            self.files = files
             self.num_of_subjects = len(files)
             if self.num_of_subjects == 0:
                 raise FileNotFoundError('Make sure to put all subject pkl files into directory', path)
-            self.__read_all_files__(files)
+            # self.__read_all_files__(files)
+            self.__create_matrix_dumps__()
         # if only one sensor and directory are given
         elif os.path.isdir(path):
             if os.path.isfile('%s/%s_combined.pkl' % (path, sensor)):
@@ -92,25 +94,43 @@ class BioSignalsReader:
         else:
             raise ValueError('The path or directory appears to be incorrect.')
 
-    def __read_all_files__(self, files):
-        for sensor in self.sensor:
-            self.all_sensor_data.update({sensor: dict()})
+    def __create_matrix_dumps__(self):
+        combined_files = np.array(glob.glob(self.directory + '/*_combined.pkl'))
+        if len(combined_files) == 0:
+            raise RuntimeError('No combined files found in directory.')
+        elif len(combined_files) != 6:
+            warnings.warn('There are some combined files missing')
+        # mask = np.in1d(matrix_files, sensor_paths)
+        # included = np.array(np.where(mask)[0])
+        matrix_files = glob.glob(self.directory + '/matrix_*.pkl')
+        # a - whole array, b - checking array
+        # check if there is combined file for specified sensors
+        sensor_paths = [f'{self.directory}\\matrix_{x}.pkl' for x in self.chest_sensors]
+        mask = np.in1d(sensor_paths, matrix_files)
+        # included = np.array(np.where(mask)[0])
+        excluded = np.array(np.where(~mask)[0])
+        for i, file in enumerate(combined_files[excluded]):
+            print('Reading combined file: ' + file)
+            self.__read_combined_file__(file)
+            sensor = self.chest_sensors[excluded[i]]
+            print('Preparing feature matrix: ' + sensor)
+            self.__save_single_sensor_matrix__(sensor)
 
+    def __read_matrix_file__(self, sensor):
+        file = f'{self.directory}/matrix_{sensor}.pkl'
+        return pandas.read_pickle(file)
+
+    def __read_all_files__(self, files):
         for file in files:
             pickle_file = pandas.read_pickle(file)
-
+            subject_name = pickle_file['subject']
+            subject_data = dict()
             for sensor in self.sensor:
-                sensor_info = dict()
-
-                subject_name = pickle_file['subject']
-                self.subject_labels.update({subject_name: pickle_file['label']})
-
                 sensor_signal = pickle_file['signal'][self.position][sensor]
-                sensor_info.update({subject_name: sensor_signal})
+                subject_data.update({sensor: sensor_signal})
 
-                self.all_sensor_data[sensor].update(sensor_info)
-        print('Finished reading all subject files.')
-        print(self.all_sensor_data)
+            subject_data.update({'label': pickle_file['label']})
+            self.all_sensor_data.update({subject_name: subject_data})
 
     def __read_and_append_files__(self, files):
         changes = False
@@ -152,12 +172,14 @@ class BioSignalsReader:
     def __read_combined_file__(self, path=None):
         """ Reads already combined file, if only one sensor is given
         path : Path to file, has to include whole file name e.g. S2.pkl
+        saves combined file to self.all_sensor_data
         """
         try:
             if path is None or not str(path).endswith('.pkl'):
                 path = '%s/%s_combined.pkl' % (self.directory, self.sensor)
             self.all_sensor_data = pandas.read_pickle(path)
             self.subjects = list(self.all_sensor_data.keys())
+            self.num_of_subjects = len(self.subjects)
         except FileNotFoundError as e:
             print('File with such name not found', e)
         except KeyError:
@@ -277,7 +299,26 @@ class BioSignalsReader:
         if not os.path.isdir(directory):
             os.mkdir(directory)
 
-    def prepare_feature_matrix(self):
+    def prepare_feature_matrix(self, sensors):
+        if self.multiple_sensors:
+            x_matrix = None
+            y_matrix = np.tile(np.array([1, 2, 3, 4]), self.num_of_subjects)
+            for sensor in sensors:
+                m_file = self.__read_matrix_file__(sensor)
+                if x_matrix is None:
+                    x_matrix = m_file
+                else:
+                    x_matrix = np.concatenate((x_matrix, m_file), axis=1)
+            return x_matrix, y_matrix
+
+            # if not fast:
+            #     return self.__prepare_multiple_sensor_matrix__()
+            # else:
+            #     return self.__prepare_multiple_sensor_matrix_fast__()
+        else:
+            return self.__prepare_single_sensor_matrix__()
+
+    def __prepare_single_sensor_matrix__(self):
         """ Prepares feature matrix for given sensor
         features are defined in calculation.features
         returns: - x_matrix
@@ -288,7 +329,7 @@ class BioSignalsReader:
         """
         num_of_subjects = len(self.all_sensor_data.keys())
         features = feat
-        x_matrix = np.zeros((num_of_subjects * len(features.keys()), 4))
+        x_matrix = np.zeros((num_of_subjects * 4, len(features.keys())))
         y_matrix = []
 
         for i, subject in enumerate(self.all_sensor_data.keys()):
@@ -301,4 +342,61 @@ class BioSignalsReader:
                     feats_for_sub.append(features[feature](sig_interval))
                 x_matrix[i * 4 + (j - 1), :] = feats_for_sub
                 y_matrix.append(j)
+        print('Finished preparing feature matrix')
         return x_matrix, np.array(y_matrix)
+
+    def __save_single_sensor_matrix__(self, sensor):
+        x_matrix, _ = self.__prepare_single_sensor_matrix__()
+        pandas.to_pickle(x_matrix, f'{self.directory}/matrix_{sensor}.pkl')
+
+    def train_and_test_model(self, sensors=None):
+        if sensors is None:
+            sensors = self.sensor
+        time = str(datetime.datetime.now())
+        file_name = '_'.join(sensors)
+        x_mat, y_mat = self.prepare_feature_matrix(sensors)
+        rs = ShuffleSplit(n_splits=10, test_size=0.3)
+        combined_text = ""
+        i = 1
+        scores = []
+        combined_text += f'Tests using sensors {self.sensor}\n'
+        combined_text += f'Time of test {time}\n'
+        print(combined_text)
+        for train_index, test_index in rs.split(x_mat):
+            x_train = x_mat[train_index.astype(int)]
+            x_test = x_mat[test_index.astype(int)]
+            y_train = y_mat[np.array(train_index).astype(int)]
+            y_test = y_mat[test_index.astype(int)]
+
+            clf = svm.SVC(kernel='linear', C=1)
+            clf.fit(x_train, y_train)
+            y_pred = clf.predict(x_test)
+            acc_score = accuracy_score(y_test, y_pred)
+            conf_matrix = confusion_matrix(y_test, y_pred)
+            scores.append(acc_score)
+            combined_text += f"Test number {i}\n"
+            combined_text += f"Accuracy score: {acc_score}\n"
+            combined_text += f"Confusion matrix: \n {conf_matrix}\n" \
+                             f"--------------------------------\n"
+            i += 1
+
+        combined_text += f"/**********************************/\n" \
+                         f"Average accuracy score: {np.average(scores)}\n"
+        print('Finished with tests.')
+        if not os.path.isdir("results"):
+            os.mkdir("results")
+        f = open(f"results/{file_name}.txt", "w")
+        f.write(combined_text)
+        f.close()
+
+    def test_all_combinations(self):
+        if type(self.sensor) is not list:
+            warnings.warn('Sensor parameter is not a list. Testing only for one sensor')
+            self.train_and_test_model()
+        elif len(self.sensor) == 1:
+            self.train_and_test_model()
+        else:
+            s_combinations = sum([list(map(list, combinations(self.sensor, i))) for i in range(1, len(self.sensor) + 1)], [])
+            for combination in s_combinations:
+                self.sensor = combination
+                self.train_and_test_model(combination)
