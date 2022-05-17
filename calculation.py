@@ -19,9 +19,19 @@ def median(x):
     return np.median(x)
 
 
+def amin(x):
+    return np.amin(x)
+
+
+def amax(x):
+    return np.amax(x)
+
+
 features = {
     'mean': mean,
     'std': std,
     'peaks': peaks,
-    'median': median
+    'median': median,
+    'min': amin,
+    'max': amax
 }
