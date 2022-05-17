@@ -12,6 +12,7 @@ from sklearn import svm
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import ShuffleSplit
+from sklearn.neighbors import KNeighborsClassifier
 
 from calculation import features as feat
 import conversion
@@ -349,7 +350,7 @@ class BioSignalsReader:
         x_matrix, _ = self.__prepare_single_sensor_matrix__()
         pandas.to_pickle(x_matrix, f'{self.directory}/matrix_{sensor}.pkl')
 
-    def train_and_test_model(self, sensors=None):
+    def train_and_test_model(self, sensors=None, knn=False):
         if sensors is None:
             sensors = self.sensor
         time = str(datetime.datetime.now())
@@ -367,8 +368,10 @@ class BioSignalsReader:
             x_test = x_mat[test_index.astype(int)]
             y_train = y_mat[np.array(train_index).astype(int)]
             y_test = y_mat[test_index.astype(int)]
-
-            clf = svm.SVC(kernel='linear', C=1)
+            if knn:
+                clf = KNeighborsClassifier()
+            else:
+                clf = svm.SVC(kernel='linear', C=1)
             clf.fit(x_train, y_train)
             y_pred = clf.predict(x_test)
             acc_score = accuracy_score(y_test, y_pred)
@@ -379,7 +382,8 @@ class BioSignalsReader:
             combined_text += f"Confusion matrix: \n {conf_matrix}\n" \
                              f"--------------------------------\n"
             i += 1
-
+        avg_score = np.average(scores)
+        min_score = np.amin(scores)
         combined_text += f"/**********************************/\n" \
                          f"Average accuracy score: {np.average(scores)}\n"
         print('Finished with tests.')
@@ -388,8 +392,10 @@ class BioSignalsReader:
         f = open(f"results/{file_name}.txt", "w")
         f.write(combined_text)
         f.close()
+        return avg_score, min_score
 
     def test_all_combinations(self):
+        combined = ""
         if type(self.sensor) is not list:
             warnings.warn('Sensor parameter is not a list. Testing only for one sensor')
             self.train_and_test_model()
@@ -399,4 +405,6 @@ class BioSignalsReader:
             s_combinations = sum([list(map(list, combinations(self.sensor, i))) for i in range(1, len(self.sensor) + 1)], [])
             for combination in s_combinations:
                 self.sensor = combination
-                self.train_and_test_model(combination)
+                avg, amin = self.train_and_test_model(combination)
+                combined += f'{combination}\t{int(avg * 100)}\t{int(amin * 100)}\n'
+        print(combined)
