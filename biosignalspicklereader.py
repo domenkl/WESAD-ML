@@ -47,7 +47,7 @@ class BioSignalsReader:
         self.position = position
         self.sampling_rate = sampling_rate
         self.subjects = []
-        self.num_of_subjects = None
+        self.num_of_subjects = 15
         self.all_sensor_data = dict()
         self.subject_labels = dict()
         self.append = False
@@ -71,20 +71,25 @@ class BioSignalsReader:
         if type(self.sensor) is list and len(self.sensor) > 1:
             self.sensor.sort()
             self.multiple_sensors = True
+            combined_files = glob.glob(path + '/*_combined.pkl')
             files = glob.glob(path + '/S*.pkl')
             self.files = files
             self.num_of_subjects = len(files)
-            if self.num_of_subjects == 0:
-                raise FileNotFoundError('Make sure to put all subject pkl files into directory', path)
-            # self.__read_all_files__(files)
-            self.__create_matrix_dumps__()
+            if len(combined_files) != 6:
+                self.__read_all_files__(files)
+                self.__save_to_combined__()
+
+            for s in self.sensor:
+                combined = self.__read_combined_file__(s)
+                self.all_sensor_data.update({s: combined})
+
         # if only one sensor and directory are given
         elif os.path.isdir(path):
             if os.path.isfile('%s/%s_combined.pkl' % (path, sensor)):
-                self.__read_combined_file__()
+                self.__read_combined_file__(sensor)
                 self.append = True
 
-            files = glob.glob(path + '/*.pkl')
+            files = glob.glob(path + '/S*.pkl')
             if len(files) == 0:
                 raise FileNotFoundError('No subject files in directory,', path)
             self.__read_and_append_files__(files)
@@ -94,6 +99,22 @@ class BioSignalsReader:
             self.all_sensor_data.update({subject: data})
         else:
             raise ValueError('The path or directory appears to be incorrect.')
+
+    def __save_to_combined__(self):
+        """ Saves loaded subject files into sensor combined files
+        """
+        for sensor in self.chest_sensors:
+            subject_data = dict()
+            for subject in self.all_sensor_data.keys():
+                subject_sensor = dict()
+                subject_sensor.update({'sensor_signal': self.all_sensor_data[subject][sensor]})
+                subject_sensor.update({'label': self.all_sensor_data[subject]['label']})
+                self.all_sensor_data[subject][sensor] = []
+                subject_data.update({subject: subject_sensor})
+            path = '%s/%s_combined.pkl' % (self.directory, sensor)
+            pandas.to_pickle(subject_data, path)
+            print(f'Saved {sensor} to combined')
+        self.all_sensor_data = dict()
 
     def __create_matrix_dumps__(self):
         combined_files = np.array(glob.glob(self.directory + '/*_combined.pkl'))
@@ -126,19 +147,20 @@ class BioSignalsReader:
             pickle_file = pandas.read_pickle(file)
             subject_name = pickle_file['subject']
             subject_data = dict()
-            for sensor in self.sensor:
+            for sensor in self.chest_sensors:
                 sensor_signal = pickle_file['signal'][self.position][sensor]
                 subject_data.update({sensor: sensor_signal})
 
             subject_data.update({'label': pickle_file['label']})
             self.all_sensor_data.update({subject_name: subject_data})
+            print(f'Loaded file {file}')
 
     def __read_and_append_files__(self, files):
         changes = False
         for file in files:
             file_basename = os.path.basename(file)
             file_name = file_basename.split('.')[0]
-            if file_name not in self.subjects and file_name.startswith('S'):
+            if file_name not in self.subjects:
                 changes = True
                 print('Appending %s subject to %s' % (file_name, self.sensor))
                 subject, data = self.__read_file__(file)
@@ -170,17 +192,18 @@ class BioSignalsReader:
         except BaseException as e:
             print('Error reading file', e)
 
-    def __read_combined_file__(self, path=None):
+    def __read_combined_file__(self, sensor):
         """ Reads already combined file, if only one sensor is given
         path : Path to file, has to include whole file name e.g. S2.pkl
         saves combined file to self.all_sensor_data
         """
         try:
-            if path is None or not str(path).endswith('.pkl'):
-                path = '%s/%s_combined.pkl' % (self.directory, self.sensor)
-            self.all_sensor_data = pandas.read_pickle(path)
-            self.subjects = list(self.all_sensor_data.keys())
-            self.num_of_subjects = len(self.subjects)
+            path = '%s/%s_combined.pkl' % (self.directory, sensor)
+            combined_file = pandas.read_pickle(path)
+            if self.subjects is None:
+                self.subjects = list(combined_file.keys())
+                self.num_of_subjects = len(self.subjects)
+            return combined_file
         except FileNotFoundError as e:
             print('File with such name not found', e)
         except KeyError:
@@ -335,9 +358,9 @@ class BioSignalsReader:
 
         for i, subject in enumerate(self.all_sensor_data.keys()):
             sensor_signal = np.array(self.all_sensor_data[subject]['sensor_signal'], dtype=float)
-            stress_level = np.array(self.all_sensor_data[subject]['stress_level'], np.uint8)
+            label = np.array(self.all_sensor_data[subject]['label'], np.uint8)
             for j in range(1, 5):
-                sig_interval = sensor_signal[stress_level == j].flatten()
+                sig_interval = sensor_signal[label == j].flatten()
                 feats_for_sub = []
                 for feature in features:
                     feats_for_sub.append(features[feature](sig_interval))
@@ -402,7 +425,8 @@ class BioSignalsReader:
         elif len(self.sensor) == 1:
             self.train_and_test_model()
         else:
-            s_combinations = sum([list(map(list, combinations(self.sensor, i))) for i in range(1, len(self.sensor) + 1)], [])
+            s_combinations = sum(
+                [list(map(list, combinations(self.sensor, i))) for i in range(1, len(self.sensor) + 1)], [])
             for combination in s_combinations:
                 self.sensor = combination
                 avg, amin = self.train_and_test_model(combination)
