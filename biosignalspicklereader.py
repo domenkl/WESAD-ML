@@ -54,6 +54,7 @@ class BioSignalsReader:
         self.multiple_sensors = False
         self.chest_sensors = ['ACC', 'ECG', 'EDA', 'EMG', 'Temp', 'Resp']
         self.files = None
+        self.feature_matrices = dict()
         self.units = conversion.units
         self.ranges = conversion.ranges
 
@@ -82,6 +83,8 @@ class BioSignalsReader:
             for s in self.sensor:
                 combined = self.__read_combined_file__(s)
                 self.all_sensor_data.update({s: combined})
+                matrix = self.__prepare_multiple_sensor_matrix(s)
+                self.feature_matrices.update({s: matrix})
 
         # if only one sensor and directory are given
         elif os.path.isdir(path):
@@ -115,28 +118,6 @@ class BioSignalsReader:
             pandas.to_pickle(subject_data, path)
             print(f'Saved {sensor} to combined')
         self.all_sensor_data = dict()
-
-    def __create_matrix_dumps__(self):
-        combined_files = np.array(glob.glob(self.directory + '/*_combined.pkl'))
-        if len(combined_files) == 0:
-            raise RuntimeError('No combined files found in directory.')
-        elif len(combined_files) != 6:
-            warnings.warn('There are some combined files missing')
-        # mask = np.in1d(matrix_files, sensor_paths)
-        # included = np.array(np.where(mask)[0])
-        matrix_files = glob.glob(self.directory + '/matrix_*.pkl')
-        # a - whole array, b - checking array
-        # check if there is combined file for specified sensors
-        sensor_paths = [f'{self.directory}\\matrix_{x}.pkl' for x in self.chest_sensors]
-        mask = np.in1d(sensor_paths, matrix_files)
-        # included = np.array(np.where(mask)[0])
-        excluded = np.array(np.where(~mask)[0])
-        for i, file in enumerate(combined_files[excluded]):
-            print('Reading combined file: ' + file)
-            self.__read_combined_file__(file)
-            sensor = self.chest_sensors[excluded[i]]
-            print('Preparing feature matrix: ' + sensor)
-            self.__save_single_sensor_matrix__(sensor)
 
     def __read_matrix_file__(self, sensor):
         file = f'{self.directory}/matrix_{sensor}.pkl'
@@ -328,22 +309,33 @@ class BioSignalsReader:
             x_matrix = None
             y_matrix = np.tile(np.array([1, 2, 3, 4]), self.num_of_subjects)
             for sensor in sensors:
-                m_file = self.__read_matrix_file__(sensor)
+                feature_matrix = self.feature_matrices[sensor]
                 if x_matrix is None:
-                    x_matrix = m_file
+                    x_matrix = feature_matrix
                 else:
-                    x_matrix = np.concatenate((x_matrix, m_file), axis=1)
+                    x_matrix = np.concatenate((x_matrix, feature_matrix), axis=1)
             return x_matrix, y_matrix
-
-            # if not fast:
-            #     return self.__prepare_multiple_sensor_matrix__()
-            # else:
-            #     return self.__prepare_multiple_sensor_matrix_fast__()
         else:
             return self.__prepare_single_sensor_matrix__()
 
+    def __prepare_multiple_sensor_matrix(self, sensor):
+        features = feat
+        x_matrix = np.zeros((self.num_of_subjects * 4, len(features.keys())))
+
+        for i, subject in enumerate(self.all_sensor_data[sensor].keys()):
+            sensor_signal = np.array(self.all_sensor_data[sensor][subject]['sensor_signal'], dtype=float)
+            label = np.array(self.all_sensor_data[sensor][subject]['label'], np.uint8)
+            for j in range(1, 5):
+                sig_interval = sensor_signal[label == j].flatten()
+                feats_for_sub = []
+                for feature in features:
+                    feats_for_sub.append(features[feature](sig_interval))
+                x_matrix[i * 4 + (j - 1), :] = feats_for_sub
+        print('Finished preparing feature matrix')
+        return x_matrix
+
     def __prepare_single_sensor_matrix__(self):
-        """ Prepares feature matrix for given sensor
+        """ Prepares feature matrix for loaded sensor
         features are defined in calculation.features
         returns: - x_matrix
             [[mean_S2, std_S2, peaks_S2, median_S2], - for stress value 1
@@ -377,7 +369,6 @@ class BioSignalsReader:
         if sensors is None:
             sensors = self.sensor
         time = str(datetime.datetime.now())
-        file_name = '_'.join(sensors)
         x_mat, y_mat = self.prepare_feature_matrix(sensors)
         rs = ShuffleSplit(n_splits=10, test_size=0.3)
         combined_text = ""
@@ -412,9 +403,6 @@ class BioSignalsReader:
         print('Finished with tests.')
         if not os.path.isdir("results"):
             os.mkdir("results")
-        f = open(f"results/{file_name}.txt", "w")
-        f.write(combined_text)
-        f.close()
         return avg_score, min_score
 
     def test_all_combinations(self):
