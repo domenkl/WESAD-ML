@@ -89,13 +89,14 @@ class BioSignalsReader:
         # if only one sensor and directory are given
         elif os.path.isdir(path):
             if os.path.isfile('%s/%s_combined.pkl' % (path, sensor)):
-                self.__read_combined_file__(sensor)
+                combined = self.__read_combined_file__(sensor)
+                self.all_sensor_data = combined
                 self.append = True
 
             files = glob.glob(path + '/S*.pkl')
             if len(files) == 0:
                 raise FileNotFoundError('No subject files in directory,', path)
-            self.__read_and_append_files__(files)
+            # self.__read_and_append_files__(files)
         # if only one sensor and exact file are given
         elif os.path.isfile(path):
             subject, data = self.__read_file__(path)
@@ -181,7 +182,7 @@ class BioSignalsReader:
         try:
             path = '%s/%s_combined.pkl' % (self.directory, sensor)
             combined_file = pandas.read_pickle(path)
-            if self.subjects is None:
+            if len(self.subjects) == 0:
                 self.subjects = list(combined_file.keys())
                 self.num_of_subjects = len(self.subjects)
             return combined_file
@@ -245,7 +246,13 @@ class BioSignalsReader:
         condition_label = self.all_sensor_data[subject]['label']
         size = len(sensor_signal)
         time_vector = np.linspace(0, float(size) / self.sampling_rate, size)
-        ranges1 = self.ranges[self.sensor]
+        # ranges1 = self.ranges[self.sensor]
+        s_min = np.min(sensor_signal)
+        s_max = np.max(sensor_signal)
+        perc = (s_max - s_min) * 0.1
+        s_max = s_max + perc if s_max > 0 else s_max - perc
+        s_min = s_min + perc if s_min > 0 else s_min - perc
+        ranges1 = [s_min, s_max]
         ranges2 = [0, 7]
         interval = [0, time_vector[-1]]
 
@@ -405,13 +412,13 @@ class BioSignalsReader:
             os.mkdir("results")
         return avg_score, min_score
 
-    def test_all_combinations(self):
+    def test_all_combinations(self, knn=False):
         combined = ""
         if type(self.sensor) is not list:
             warnings.warn('Sensor parameter is not a list. Testing only for one sensor')
-            self.train_and_test_model()
+            self.train_and_test_model(knn)
         elif len(self.sensor) == 1:
-            self.train_and_test_model()
+            self.train_and_test_model(knn)
         else:
             s_combinations = sum(
                 [list(map(list, combinations(self.sensor, i))) for i in range(1, len(self.sensor) + 1)], [])
