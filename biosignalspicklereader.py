@@ -17,6 +17,14 @@ from sklearn.neighbors import KNeighborsClassifier
 from calculation import features as feat
 import conversion
 
+colors = {
+    'ECG': 'g',
+    'Resp': 'b',
+    'EDA': 'grey',
+    'Temp': 'orange',
+    'EMG': 'black'
+}
+
 
 class BioSignalsReader:
 
@@ -244,23 +252,22 @@ class BioSignalsReader:
     def __prepare_subject_graph__(self, subject):
         sensor_signal = self.all_sensor_data[subject]['sensor_signal']
         condition_label = self.all_sensor_data[subject]['label']
+        color = colors[self.sensor]
         size = len(sensor_signal)
         time_vector = np.linspace(0, float(size) / self.sampling_rate, size)
         # ranges1 = self.ranges[self.sensor]
         s_min = np.min(sensor_signal)
         s_max = np.max(sensor_signal)
         perc = (s_max - s_min) * 0.1
-        s_max = s_max + perc if s_max > 0 else s_max - perc
-        s_min = s_min + perc if s_min > 0 else s_min - perc
-        ranges1 = [s_min, s_max]
+        ranges1 = [s_min - perc, s_max + perc]
         ranges2 = [0, 7]
         interval = [0, time_vector[-1]]
 
         fig, ax1 = plt.subplots()
         ax1.set_xlabel('Time (s)')
-        ax1.set_ylabel('%s sensor (%s)' % (self.sensor, self.units[self.sensor]), color='g')
-        ax1.plot(time_vector, sensor_signal, color='g')
-        ax1.tick_params(axis='y', labelcolor='g')
+        ax1.set_ylabel('%s sensor (%s)' % (self.sensor, self.units[self.sensor]), color=color)
+        ax1.plot(time_vector, sensor_signal, color=color)
+        ax1.tick_params(axis='y', labelcolor=color)
         ax1.axis([interval[0], interval[1], ranges1[0], ranges1[1]])
 
         ax2 = ax1.twinx()
