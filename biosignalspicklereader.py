@@ -1,7 +1,6 @@
 import datetime
 import glob
 import os
-import warnings
 from itertools import combinations
 from multiprocessing import Pool
 
@@ -63,7 +62,7 @@ class BioSignalsReader:
         self.chest_sensors = ['ACC', 'ECG', 'EDA', 'EMG', 'Temp', 'Resp']
         self.files = None
         self.feature_matrices = dict()
-        self.num_feature_combinations = None
+        self.num_feature_combinations = 1
         self.feature_combinations = []
         self.units = conversion.units
         self.ranges = conversion.ranges
@@ -78,6 +77,11 @@ class BioSignalsReader:
         if self.sensor == 'all':
             self.sensor = self.chest_sensors
 
+        if test_features:
+            self.feature_combinations = sum(
+                [list(map(list, combinations(feat.keys(), i))) for i in range(1, len(feat.keys()) + 1)], [])
+            self.num_feature_combinations = len(self.feature_combinations)
+
         # if more than one sensor is given
         if type(self.sensor) is list and len(self.sensor) > 1:
             self.sensor.sort()
@@ -90,9 +94,6 @@ class BioSignalsReader:
                 self.__read_all_files__(files)
                 self.__save_to_combined__()
 
-            self.feature_combinations = sum(
-                [list(map(list, combinations(feat.keys(), i))) for i in range(1, len(feat.keys()) + 1)], [])
-            self.num_feature_combinations = len(self.feature_combinations)
             for s in self.sensor:
                 combined = self.__read_combined_file__(s)
                 self.all_sensor_data.update({s: combined})
@@ -337,7 +338,7 @@ class BioSignalsReader:
 
     def prepare_feature_matrix(self, sensors, pos=None):
         if not self.multiple_sensors:
-            return self.__prepare_single_sensor_matrix__()
+            return self.__prepare_single_sensor_matrix__(pos)
         x_matrix = None
         y_matrix = np.tile(np.array([1, 2, 3, 4]), self.num_of_subjects)
         for sensor in sensors:
@@ -367,7 +368,7 @@ class BioSignalsReader:
         print(f'Finished preparing feature matrix for {sensor} with features {features.keys()}')
         return x_matrix
 
-    def __prepare_single_sensor_matrix__(self):
+    def __prepare_single_sensor_matrix__(self, pos=None):
         """ Prepares feature matrix for loaded sensor
         features are defined in calculation.features
         returns: - x_matrix
@@ -376,9 +377,9 @@ class BioSignalsReader:
             [...]] - ...
                 y_matrix stress value corresponding to x_matrix row
         """
-        num_of_subjects = len(self.all_sensor_data.keys())
         features = feat
-        x_matrix = np.zeros((num_of_subjects * 4, len(features.keys())))
+        num_of_subjects = len(self.all_sensor_data.keys())
+        x_matrix = np.zeros((num_of_subjects * 4, len(pos)))
         y_matrix = []
 
         for i, subject in enumerate(self.all_sensor_data.keys()):
@@ -387,11 +388,11 @@ class BioSignalsReader:
             for j in range(1, 5):
                 sig_interval = sensor_signal[label == j].flatten()
                 feats_for_sub = []
-                for feature in features:
+                for feature in pos:
                     feats_for_sub.append(features[feature](sig_interval))
                 x_matrix[i * 4 + (j - 1), :] = feats_for_sub
                 y_matrix.append(j)
-        print('Finished preparing feature matrix')
+        print(f'Finished preparing feature matrix for {self.sensor}, features: {list(pos)}')
         return x_matrix, np.array(y_matrix)
 
     def __save_single_sensor_matrix__(self, sensor):
@@ -437,18 +438,24 @@ class BioSignalsReader:
         min_score = np.amin(scores)
         combined_text += f"/**********************************/\n" \
                          f"Average accuracy score: {np.average(scores)}\n"
-        print('Finished with tests.')
         if not os.path.isdir("results"):
             os.mkdir("results")
         return avg_score, min_score
 
+    def __test_combinations_single_sensor__(self):
+        combined = ""
+        for i in range(self.num_feature_combinations):
+            avg, amin = self.train_and_test_model(self.sensor, pos=i)
+            combined += f'{self.sensor}\t{self.feature_combinations[i]}\t{int(avg * 100)}\t' \
+                        f'{int(amin * 100)}\n'
+        print(combined)
+
     def test_all_combinations(self, knn=False):
         combined = ""
         if type(self.sensor) is not list:
-            warnings.warn('Sensor parameter is not a list. Testing only for one sensor')
-            self.train_and_test_model(knn=knn)
+            self.__test_combinations_single_sensor__()
         elif len(self.sensor) == 1:
-            self.train_and_test_model(knn=knn)
+            self.__test_combinations_single_sensor__()
         else:
             s_combinations = sum(
                 [list(map(list, combinations(self.sensor, i))) for i in range(1, len(self.sensor) + 1)], [])
@@ -462,6 +469,7 @@ class BioSignalsReader:
                     self.sensor = combination
                     for i in range(self.num_feature_combinations):
                         avg, amin = self.train_and_test_model(combination, pos=i)
-                        combined += f'{combination}\t{self.feature_combinations[i]}\t{int(avg * 100)}\t{int(amin * 100)}\n'
+                        combined += f'{combination}\t{self.feature_combinations[i]}\t{int(avg * 100)}\t' \
+                                    f'{int(amin * 100)}\n'
 
         print(combined)
