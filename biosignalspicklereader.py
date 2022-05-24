@@ -28,7 +28,7 @@ colors = {
 
 class BioSignalsReader:
 
-    def __init__(self, sensor='all', path=None, position='chest', sampling_rate=700):
+    def __init__(self, sensor='all', path=None, test_features=False, position='chest', sampling_rate=700):
         """ Reads either separate pickle files or reads every pickle file starting with
         name S (as subject) in given directory.
         Note: all subject pkl files must be in the same directory.
@@ -63,6 +63,8 @@ class BioSignalsReader:
         self.chest_sensors = ['ACC', 'ECG', 'EDA', 'EMG', 'Temp', 'Resp']
         self.files = None
         self.feature_matrices = dict()
+        self.num_feature_combinations = None
+        self.feature_combinations = []
         self.units = conversion.units
         self.ranges = conversion.ranges
 
@@ -88,11 +90,26 @@ class BioSignalsReader:
                 self.__read_all_files__(files)
                 self.__save_to_combined__()
 
+            self.feature_combinations = sum(
+                [list(map(list, combinations(feat.keys(), i))) for i in range(1, len(feat.keys()) + 1)], [])
+            self.num_feature_combinations = len(self.feature_combinations)
             for s in self.sensor:
                 combined = self.__read_combined_file__(s)
                 self.all_sensor_data.update({s: combined})
-                matrix = self.__prepare_multiple_sensor_matrix(s)
-                self.feature_matrices.update({s: matrix})
+                if test_features:
+                    sensor_matrices = []
+                    # for each feature combination
+                    for combination in self.feature_combinations:
+                        feature_dict = dict()
+                        # create feature dictionary as input to preparing feature matrix
+                        for feature in combination:
+                            feature_dict.update({feature: feat[feature]})
+                        matrix = self.__prepare_multiple_sensor_matrix(s, feature_dict)
+                        sensor_matrices.append(matrix)
+                    self.feature_matrices.update({s: sensor_matrices})
+                else:
+                    matrix = self.__prepare_multiple_sensor_matrix(s)
+                    self.feature_matrices.update({s: matrix})
 
         # if only one sensor and directory are given
         elif os.path.isdir(path):
@@ -318,22 +335,24 @@ class BioSignalsReader:
         if not os.path.isdir(directory):
             os.mkdir(directory)
 
-    def prepare_feature_matrix(self, sensors):
-        if self.multiple_sensors:
-            x_matrix = None
-            y_matrix = np.tile(np.array([1, 2, 3, 4]), self.num_of_subjects)
-            for sensor in sensors:
-                feature_matrix = self.feature_matrices[sensor]
-                if x_matrix is None:
-                    x_matrix = feature_matrix
-                else:
-                    x_matrix = np.concatenate((x_matrix, feature_matrix), axis=1)
-            return x_matrix, y_matrix
-        else:
+    def prepare_feature_matrix(self, sensors, pos=None):
+        if not self.multiple_sensors:
             return self.__prepare_single_sensor_matrix__()
+        x_matrix = None
+        y_matrix = np.tile(np.array([1, 2, 3, 4]), self.num_of_subjects)
+        for sensor in sensors:
+            feature_matrix = self.feature_matrices[sensor]
+            if pos is not None:
+                feature_matrix = self.feature_matrices[sensor][pos]
+            if x_matrix is None:
+                x_matrix = feature_matrix
+            else:
+                x_matrix = np.concatenate((x_matrix, feature_matrix), axis=1)
+        return x_matrix, y_matrix
 
-    def __prepare_multiple_sensor_matrix(self, sensor):
-        features = feat
+    def __prepare_multiple_sensor_matrix(self, sensor, features=None):
+        if features is None:
+            features = feat
         x_matrix = np.zeros((self.num_of_subjects * 4, len(features.keys())))
 
         for i, subject in enumerate(self.all_sensor_data[sensor].keys()):
@@ -345,7 +364,7 @@ class BioSignalsReader:
                 for feature in features:
                     feats_for_sub.append(features[feature](sig_interval))
                 x_matrix[i * 4 + (j - 1), :] = feats_for_sub
-        print('Finished preparing feature matrix')
+        print(f'Finished preparing feature matrix for {sensor} with features {features.keys()}')
         return x_matrix
 
     def __prepare_single_sensor_matrix__(self):
@@ -379,16 +398,20 @@ class BioSignalsReader:
         x_matrix, _ = self.__prepare_single_sensor_matrix__()
         pandas.to_pickle(x_matrix, f'{self.directory}/matrix_{sensor}.pkl')
 
-    def train_and_test_model(self, sensors=None, knn=False):
+    def train_and_test_model(self, sensors=None, knn=False, pos=None):
         if sensors is None:
             sensors = self.sensor
+        if pos is None:
+            pos = feat.keys()
+        else:
+            pos = self.feature_combinations[pos]
         time = str(datetime.datetime.now())
-        x_mat, y_mat = self.prepare_feature_matrix(sensors)
+        x_mat, y_mat = self.prepare_feature_matrix(sensors, pos)
         rs = ShuffleSplit(n_splits=10, test_size=0.3)
         combined_text = ""
         i = 1
         scores = []
-        combined_text += f'Tests using sensors {self.sensor}\n'
+        combined_text += f'Tests using sensors {self.sensor}, features {pos}\n'
         combined_text += f'Time of test {time}\n'
         print(combined_text)
         for train_index, test_index in rs.split(x_mat):
@@ -423,14 +446,22 @@ class BioSignalsReader:
         combined = ""
         if type(self.sensor) is not list:
             warnings.warn('Sensor parameter is not a list. Testing only for one sensor')
-            self.train_and_test_model(knn)
+            self.train_and_test_model(knn=knn)
         elif len(self.sensor) == 1:
-            self.train_and_test_model(knn)
+            self.train_and_test_model(knn=knn)
         else:
             s_combinations = sum(
                 [list(map(list, combinations(self.sensor, i))) for i in range(1, len(self.sensor) + 1)], [])
-            for combination in s_combinations:
-                self.sensor = combination
-                avg, amin = self.train_and_test_model(combination)
-                combined += f'{combination}\t{int(avg * 100)}\t{int(amin * 100)}\n'
+            if self.num_feature_combinations is None:
+                for combination in s_combinations:
+                    self.sensor = combination
+                    avg, amin = self.train_and_test_model(combination)
+                    combined += f'{combination}\t{int(avg * 100)}\t{int(amin * 100)}\n'
+            else:
+                for combination in s_combinations:
+                    self.sensor = combination
+                    for i in range(self.num_feature_combinations):
+                        avg, amin = self.train_and_test_model(combination, pos=i)
+                        combined += f'{combination}\t{self.feature_combinations[i]}\t{int(avg * 100)}\t{int(amin * 100)}\n'
+
         print(combined)
