@@ -63,6 +63,7 @@ class BioSignalsReader:
         self.files = None
         self.feature_matrices = dict()
         self.num_feature_combinations = 1
+        self.test_features = test_features
         self.feature_combinations = []
         self.units = conversion.units
         self.ranges = conversion.ranges
@@ -343,7 +344,7 @@ class BioSignalsReader:
         y_matrix = np.tile(np.array([1, 2, 3, 4]), self.num_of_subjects)
         for sensor in sensors:
             feature_matrix = self.feature_matrices[sensor]
-            if pos is not None:
+            if self.test_features:
                 feature_matrix = self.feature_matrices[sensor][pos]
             if x_matrix is None:
                 x_matrix = feature_matrix
@@ -402,10 +403,10 @@ class BioSignalsReader:
     def train_and_test_model(self, sensors=None, knn=False, pos=None):
         if sensors is None:
             sensors = self.sensor
-        if pos is None:
-            pos = feat.keys()
-        else:
+        if pos is not None:
             pos = self.feature_combinations[pos]
+        else:
+            pos = feat.keys()
         time = str(datetime.datetime.now())
         x_mat, y_mat = self.prepare_feature_matrix(sensors, pos)
         rs = ShuffleSplit(n_splits=10, test_size=0.3)
@@ -459,16 +460,16 @@ class BioSignalsReader:
         else:
             s_combinations = sum(
                 [list(map(list, combinations(self.sensor, i))) for i in range(1, len(self.sensor) + 1)], [])
-            if self.num_feature_combinations is None:
+            if not self.test_features:
                 for combination in s_combinations:
                     self.sensor = combination
-                    avg, amin = self.train_and_test_model(combination)
+                    avg, amin = self.train_and_test_model(combination, knn=knn)
                     combined += f'{combination}\t{int(avg * 100)}\t{int(amin * 100)}\n'
             else:
                 for combination in s_combinations:
                     self.sensor = combination
                     for i in range(self.num_feature_combinations):
-                        avg, amin = self.train_and_test_model(combination, pos=i)
+                        avg, amin = self.train_and_test_model(combination, pos=i, knn=knn)
                         combined += f'{combination}\t{self.feature_combinations[i]}\t{int(avg * 100)}\t' \
                                     f'{int(amin * 100)}\n'
 
