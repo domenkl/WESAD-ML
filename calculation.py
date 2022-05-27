@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.signal as scs
+import scipy.stats as stats
 
 
 def mean(x):
@@ -12,7 +13,8 @@ def std(x):
 
 def peaks(x):
     peak_nums, _ = scs.find_peaks(x)
-    return len(peak_nums)
+    peaks_phk = len(peak_nums) * 10000 / len(x)
+    return int(peaks_phk)
 
 
 def median(x):
@@ -27,10 +29,15 @@ def amax(x):
     return np.amax(x)
 
 
+def skew(x):
+    return stats.skew(x)
+
+
 features = {
     'mean': mean,
     'std': std,
-    'peaks': peaks,
+    'skew': skew,
+    # 'peaks': peaks,
     'median': median,
     'min': amin,
     'max': amax
